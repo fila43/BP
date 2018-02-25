@@ -3,6 +3,10 @@ import sys
 import os
 import subprocess
 import re
+import binascii
+import argparse
+
+
 
 
 class ObjectData:
@@ -42,7 +46,7 @@ class Protocol:
 
     def __str__(self):
         for obj in self.__obj_stack:
-            print obj
+            print (obj)
         return ""
 
     @staticmethod
@@ -62,7 +66,7 @@ class Protocol:
         return self.__server_port
 
     def obj_count(self):
-        print self.__obj_stack
+        print (self.__obj_stack)
         return len(self.__obj_stack)
 
     def __remove_last(self):
@@ -73,6 +77,9 @@ class Protocol:
 
     def get_object(self, index):
         return self.__obj_stack[index]
+
+    def get_obj_list_len(self):
+        return len(self.__obj_stack)
 
     def get_last_object(self):
         return self.__obj_stack[len(self.__obj_stack)-1:][0]
@@ -98,7 +105,7 @@ class Protocol:
         command_found = False   # flag True if object was found
 
         for packet in self.__json_data: # loop over each packet
-            if self.__server is not None and (self.__server != self.__search("ip.src", packet)):
+            if self.__server is not None and (self.__server != self.__search("ip.src", packet)) and (self.__search("tcp.len", packet) != "0"):
                 command_found = False   # restart process of searching when whole object was send
 
             if not command_found:       # searching start of object
@@ -119,11 +126,10 @@ class Protocol:
                     if error_value == self.__error_code:
                         self.__remove_last()
                         command_found = False
-                        print "deleting"
+                        print ("deleting")
             if command_found and (self.__server == self.__search("ip.src", packet)):
                 tcp_length = self.__search(self.__find_attr, packet)
                 if tcp_length is not None:
-                    print tcp_length
                     self.get_last_object().add(int(tcp_length))
 
 
@@ -187,40 +193,107 @@ class HexaData:
 
         return final_ip[:-1]
 
-    #def __del__(self):
-    #os.system('rm -r hexa/')
+    def write_data(self, source_name, dest_name, protocol, delimiter = None):
+        with open("hexa/" + source_name + ".data", 'rb') as myfile:
+
+            i = 0
+            while i<protocol.get_obj_list_len():
+                myfile.seek(2 * (protocol.get_object(i).start() - 1))
+                data = myfile.read((protocol.get_object(i).length()) * 2)  # if you only wanted to read 512 bytes, do .read(512)
+                if delimiter is not None:
+                    offset = data.find(delimiter)
+                    if offset == -1:
+                        offset = 0  # TODO exception
+                        delimiter = ''
+                    if delimiter != "":
+                        data = data[offset + len(delimiter):]
+                data = binascii.unhexlify(data)
+                with open(dest_name+str(i), 'wb') as out:
+                    out.seek(0)
+                    out.write(data)
+                file.close(out)
+                print "Creating file: "+dest_name+str(i)
+                i = i+1
+
+    def __del__(self):
+        os.system('rm -r hexa/')
+
+
+class Initialization:
+    def __init__(self):
+        self.__args = None
+        self.__protocol = {}
+        self.__arguments()
+        self.__read_config()
+
+    def __arguments(self):
+        parser = argparse.ArgumentParser(description='Extraction of some application data')
+        parser.add_argument('file', metavar='file', help='source pcap file')
+        parser.add_argument('--level', help='filtering level 1 - all, 2 - user data with headers, 3 - only user data,'
+                                            ' default level is 1')
+        parser.add_argument('--config', help='path to configuration file, default config')
+        parser.add_argument('--errors', action='store_true', help='extract successful and wrong response,'
+                                                                  ' default options is only ''for successful response')
+        self.__args = parser.parse_args()
+        if not "config" in self.__args:
+            self.__args['config'] = "config"
+
+    def __read_config(self):
+        with open(self.__args.config, 'r') as config_file:
+            self.__protocol['json_field'] = config_file.readline().strip()[9:]
+            self.__protocol['command'] = config_file.readline().strip()[6:]
+            self.__protocol['error'] = config_file.readline().strip()[6:]
+            self.__protocol['error_value'] = config_file.readline().strip()[12:]
+            delimiter = config_file.readline().strip()[10:]
+            self.__protocol['delimiter'] = delimiter.decode("unicode_escape").encode("hex")
+
+    def __get_error_name(self):
+        return self.__protocol['error']
+
+    def __get_error_value(self):
+        return self.__protocol['error_value']
+
+    def run(self):
+        if "level" not in self.__args or self.__args.level == "1":
+            p = subprocess.Popen(["tcpflow", "-r", self.__args.file, "-C"], stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE)
+            data, err = p.communicate()
+            with open("vysledek.jpeg", 'wb') as out:
+                out.seek(0)
+                out.write(data)
+                file.close(out)
+            if os.path.exists("report.xml"):
+                subprocess.call(["rm", "report.xml"])
+            print "Creating file: Vysledek.jpeg" # TODO pridat jmeno
+            exit(0)
+
+        protocol = Protocol(self.__protocol['json_field'], self.__protocol['command'], "tcp.len", self.__args.file)
+
+        if "errors" not in self.__args:
+            protocol.set_error(self.__get_error_name(), self.__get_error_value())
+        protocol.find_length()
+        if protocol.get_obj_list_len() == 0:
+            print "Nothing to do! "
+            exit(0)
+
+        data = HexaData(self.__args.file)
+        name = HexaData.convert_ip(protocol.server_ip() + "." + protocol.server_port())
+        if self.__args.level == "3":
+            data.write_data(name, "vysledek.jpeg", protocol, self.__protocol['delimiter'])
+        else:
+            data.write_data(name, "vysledek.jpeg", protocol)
+
+        return protocol.get_obj_list_len()
+
+
+init = Initialization()
+init.run()
 
 
 
 
 
-if sys.argv <= 1:
-    print "lepe argumenty"
-    exit(1)
-
-
-  #  print json.dumps(packet, indent=4, sort_keys=True)
-with open("config",'r') as config_file:
-    json_field = config_file.readline().strip()
-    command = config_file.readline().strip()
-#print "JSON: "+json_field.strip()
-#print "command: "+command.strip()
-
-protokol = Protocol(json_field, command, "tcp.len",sys.argv[1])
-protokol.set_error("pop.response.indicator", "-ERR")
-protokol.find_length()
-print protokol.get_object(0)
-
-data = HexaData(sys.argv[1])
-name = HexaData.convert_ip(protokol.server_ip()+"."+protokol.server_port())
-print name
-
-with open("hexa/"+name+".data", 'rb') as myfile:
-    myfile.seek(2*protokol.get_object(0).start())
-    data = myfile.read((protokol.get_object(0).length()-1) * 2) # if you only wanted to read 512 bytes, do .read(512)
-    data = data.strip()
-    #print data.decode("hex")
-    print data
+#print data
 
 
 
