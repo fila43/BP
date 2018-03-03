@@ -77,6 +77,9 @@ class Protocol:
     def remove_error(self):
         self.__error = None
         self.__error_code = None
+        self.clean_obj_stack()
+
+    def clean_obj_stack(self):
         del self.__obj_stack[:]
 
     def server_port(self):
@@ -248,9 +251,9 @@ class Initialization:
         self.__protocol_rules = {}
         self.__arguments()
         self.__read_config()
-        self.__hexa_data = None
+        self.__hexa_data = HexaData(self.__args.file)
         self.__file_name = None
-        self.__protocol = None
+        self.__protocol = Protocol(self.__protocol_rules['json_field'], self.__protocol_rules['command'], "tcp.len", self.__args.file)
 
     def __arguments(self):
         parser = argparse.ArgumentParser(description='Extraction of some application data')
@@ -281,56 +284,53 @@ class Initialization:
         return self.__protocol_rules['error_value']
 
     def level1(self):
+            self.__protocol.remove_error()
+            self.__protocol.find_length()
+            self.test_object_count()
+            name = self.__protocol.server_ip() + ":" + self.__protocol.server_port() + "-" + \
+                   self.__protocol.client_ip() + ":" + self.__protocol.client_port() + "_full"
+            self.__protocol.clean_obj_stack()
+
             p = subprocess.Popen(["tcpflow", "-r", self.__args.file, "-C"], stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE)
             data, err = p.communicate()
-            with open("vysledek.jpeg", 'wb') as out:
+
+            with open(name, 'wb') as out:
                 out.seek(0)
                 out.write(data)
                 file.close(out)
             if os.path.exists("report.xml"):
                 subprocess.call(["rm", "report.xml"])
-            print "Creating file: full_communication" # TODO pridat jmeno
-            exit(0)
+            print "Creating file: "+ name # TODO pridat jmeno
 
-    def extract(self):
-        self.__protocol = Protocol(self.__protocol_rules['json_field'], self.__protocol_rules['command'], "tcp.len", self.__args.file)
-
-        if "errors" not in self.__args:
-            self.__protocol.set_error(self.__get_error_name(), self.__get_error_value())
-
-        if "level" in self.__args and self.__args.level == "2":
-            self.__protocol.find_length()
-        elif "level" in self.__args and self.__args.level == "3":
-            self.__protocol.remove_error()
-            self.__protocol.find_length(self.__protocol_rules['request_parameter'])
-        else:
-            print "Some error"
-            exit(1)
-
-        print self.__protocol.get_obj_list_len()
+    def test_object_count(self):
 
         if self.__protocol.get_obj_list_len() == 0:
             print "Nothing to do! "
-            exit(0)
 
-        self.__hexa_data = HexaData(self.__args.file)
         self.__file_name = HexaData.convert_ip(self.__protocol.server_ip() + "." + self.__protocol.server_port())
 
     def level3(self):
-            self.__hexa_data.write_data(self.__file_name,
-                                        self.__protocol.server_ip()+":"+self.__protocol.server_port()+"-" +
-                                        self.__protocol.client_ip()+":"+self.__protocol.client_port()+"_object",
-                                        self.__protocol, self.__protocol_rules['delimiter'])
+        self.__protocol.set_error(self.__get_error_name(), self.__get_error_value())
+        self.__protocol.find_length()
+        self.test_object_count()
+        self.__hexa_data.write_data(self.__file_name,
+                                    self.__protocol.server_ip()+":"+self.__protocol.server_port()+"-" +
+                                    self.__protocol.client_ip()+":"+self.__protocol.client_port()+"_object",
+                                    self.__protocol, self.__protocol_rules['delimiter'])
+        self.__protocol.clean_obj_stack()
 
     def level2(self):
-            self.__hexa_data.write_data(self.__file_name,
-                                        self.__protocol.server_ip()+":"+self.__protocol.server_port()+"-" +
-                                        self.__protocol.client_ip()+":"+self.__protocol.client_port()+"_request",
-                                        self.__protocol)
+       # self.__protocol.remove_error()
+        self.__protocol.find_length(self.__protocol_rules['request_parameter'])
+        self.test_object_count()
+        self.__hexa_data.write_data(self.__file_name,
+                                    self.__protocol.server_ip()+":"+self.__protocol.server_port()+"-" +
+                                    self.__protocol.client_ip()+":"+self.__protocol.client_port()+"_request",
+                                    self.__protocol)
+        self.__protocol.clean_obj_stack()
 
     def run(self):
-        self.extract()
         if "level" not in self.__args or self.__args.level == "1":
             self.level1()
         elif "level" in self.__args and self.__args.level == "2":
@@ -339,7 +339,7 @@ class Initialization:
             self.level3()
         else:
             self.level1()
-            self.level3()
+            self.level2()
             self.level3()
 
 
