@@ -32,7 +32,7 @@ class ObjectData:
 
 class Protocol:
     def __init__(self, command_key, command, find_attr, pcap):
-        self.__command = command
+        self.__command = command.upper()
         self.__find_attr = find_attr
         self.__command_key = command_key
         self.__client = None
@@ -43,11 +43,17 @@ class Protocol:
         self.__error_code = None
         self.__json_data = json.loads(self.__create_json(pcap))
         self.__obj_stack = []
+        self.__request_value = None
 
     def __str__(self):
         for obj in self.__obj_stack:
             print (obj)
         return ""
+
+    def get_request(self):
+        if self.__request_value is None:
+            return None
+        return self.__command+" "+self.__request_value+"\n"
 
     @staticmethod
     def __create_json(pcap):
@@ -58,9 +64,20 @@ class Protocol:
     def server_ip(self):
         return self.__server
 
+    def client_ip(self):
+        return self.__client
+
+    def client_port(self):
+        return self.__client_port
+
     def set_error(self, error, error_code):
         self.__error = error
         self.__error_code = error_code
+
+    def remove_error(self):
+        self.__error = None
+        self.__error_code = None
+        del self.__obj_stack[:]
 
     def server_port(self):
         return self.__server_port
@@ -100,7 +117,7 @@ class Protocol:
         with open(filename) as my_file:
             return json.load(my_file)
 
-    def find_length(self):
+    def find_length(self, request_parameter = None):
         """ find starts and lengths of all sending object and store it into list of ObjectData"""
         command_found = False   # flag True if object was found
 
@@ -111,8 +128,11 @@ class Protocol:
             if not command_found:       # searching start of object
                 command_value = self.__search(self.__command_key, packet)
 
-                if command_value == self.__command:
+                if (command_value is not None) and command_value.upper() == self.__command:
                     command_found = True
+
+                    if request_parameter is not None:
+                        self.__request_value = self.__search(request_parameter, packet)     #level 2 zjisteni prikazu
 
                     self.__add_object(ObjectData(self.__search("tcp.ack", packet)))
                     self.__client = self.__search("ip.src", packet)
@@ -121,12 +141,13 @@ class Protocol:
                     self.__client_port = self.__search("tcp.srcport", packet)
 
             if command_found and (self.__server == self.__search("ip.src", packet)):    # setup object length
-                error_value = self.__search(self.__error, packet)
-                if error_value is not None:
-                    if error_value == self.__error_code:
-                        self.__remove_last()
-                        command_found = False
-                        print ("deleting")
+                if self.__error is not None:
+                    error_value = self.__search(self.__error, packet)
+                    if error_value is not None:
+                        if error_value == self.__error_code:
+                            self.__remove_last()
+                            command_found = False
+                            print ("deleting")
             if command_found and (self.__server == self.__search("ip.src", packet)):
                 tcp_length = self.__search(self.__find_attr, packet)
                 if tcp_length is not None:
@@ -208,11 +229,13 @@ class HexaData:
                     if delimiter != "":
                         data = data[offset + len(delimiter):]
                 data = binascii.unhexlify(data)
-                with open(dest_name+str(i), 'wb') as out:
+                with open(dest_name+"("+str(i)+")", 'wb') as out:
                     out.seek(0)
+                    if protocol.get_request() is not None:
+                        out.write(protocol.get_request())
                     out.write(data)
                 file.close(out)
-                print "Creating file: "+dest_name+str(i)
+                print "Creating file: "+dest_name+"("+str(i)+")"
                 i = i+1
 
     def __del__(self):
@@ -222,15 +245,18 @@ class HexaData:
 class Initialization:
     def __init__(self):
         self.__args = None
-        self.__protocol = {}
+        self.__protocol_rules = {}
         self.__arguments()
         self.__read_config()
+        self.__hexa_data = None
+        self.__file_name = None
+        self.__protocol = None
 
     def __arguments(self):
         parser = argparse.ArgumentParser(description='Extraction of some application data')
         parser.add_argument('file', metavar='file', help='source pcap file')
         parser.add_argument('--level', help='filtering level 1 - all, 2 - user data with headers, 3 - only user data,'
-                                            ' default level is 1')
+                                            ' default all levels')
         parser.add_argument('--config', help='path to configuration file, default config')
         parser.add_argument('--errors', action='store_true', help='extract successful and wrong response,'
                                                                   ' default options is only ''for successful response')
@@ -240,21 +266,21 @@ class Initialization:
 
     def __read_config(self):
         with open(self.__args.config, 'r') as config_file:
-            self.__protocol['json_field'] = config_file.readline().strip()[9:]
-            self.__protocol['command'] = config_file.readline().strip()[6:]
-            self.__protocol['error'] = config_file.readline().strip()[6:]
-            self.__protocol['error_value'] = config_file.readline().strip()[12:]
+            self.__protocol_rules['json_field'] = config_file.readline().strip()[9:]
+            self.__protocol_rules['request_parameter'] = config_file.readline().strip()[8:]
+            self.__protocol_rules['command'] = config_file.readline().strip()[6:]
+            self.__protocol_rules['error'] = config_file.readline().strip()[6:]
+            self.__protocol_rules['error_value'] = config_file.readline().strip()[12:]
             delimiter = config_file.readline().strip()[10:]
-            self.__protocol['delimiter'] = delimiter.decode("unicode_escape").encode("hex")
+            self.__protocol_rules['delimiter'] = delimiter.decode("unicode_escape").encode("hex")
 
     def __get_error_name(self):
-        return self.__protocol['error']
+        return self.__protocol_rules['error']
 
     def __get_error_value(self):
-        return self.__protocol['error_value']
+        return self.__protocol_rules['error_value']
 
-    def run(self):
-        if "level" not in self.__args or self.__args.level == "1":
+    def level1(self):
             p = subprocess.Popen(["tcpflow", "-r", self.__args.file, "-C"], stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE)
             data, err = p.communicate()
@@ -264,26 +290,58 @@ class Initialization:
                 file.close(out)
             if os.path.exists("report.xml"):
                 subprocess.call(["rm", "report.xml"])
-            print "Creating file: Vysledek.jpeg" # TODO pridat jmeno
+            print "Creating file: full_communication" # TODO pridat jmeno
             exit(0)
 
-        protocol = Protocol(self.__protocol['json_field'], self.__protocol['command'], "tcp.len", self.__args.file)
+    def extract(self):
+        self.__protocol = Protocol(self.__protocol_rules['json_field'], self.__protocol_rules['command'], "tcp.len", self.__args.file)
 
         if "errors" not in self.__args:
-            protocol.set_error(self.__get_error_name(), self.__get_error_value())
-        protocol.find_length()
-        if protocol.get_obj_list_len() == 0:
+            self.__protocol.set_error(self.__get_error_name(), self.__get_error_value())
+
+        if "level" in self.__args and self.__args.level == "2":
+            self.__protocol.find_length()
+        elif "level" in self.__args and self.__args.level == "3":
+            self.__protocol.remove_error()
+            self.__protocol.find_length(self.__protocol_rules['request_parameter'])
+        else:
+            print "Some error"
+            exit(1)
+
+        print self.__protocol.get_obj_list_len()
+
+        if self.__protocol.get_obj_list_len() == 0:
             print "Nothing to do! "
             exit(0)
 
-        data = HexaData(self.__args.file)
-        name = HexaData.convert_ip(protocol.server_ip() + "." + protocol.server_port())
-        if self.__args.level == "3":
-            data.write_data(name, "vysledek.jpeg", protocol, self.__protocol['delimiter'])
-        else:
-            data.write_data(name, "vysledek.jpeg", protocol)
+        self.__hexa_data = HexaData(self.__args.file)
+        self.__file_name = HexaData.convert_ip(self.__protocol.server_ip() + "." + self.__protocol.server_port())
 
-        return protocol.get_obj_list_len()
+    def level3(self):
+            self.__hexa_data.write_data(self.__file_name,
+                                        self.__protocol.server_ip()+":"+self.__protocol.server_port()+"-" +
+                                        self.__protocol.client_ip()+":"+self.__protocol.client_port()+"_object",
+                                        self.__protocol, self.__protocol_rules['delimiter'])
+
+    def level2(self):
+            self.__hexa_data.write_data(self.__file_name,
+                                        self.__protocol.server_ip()+":"+self.__protocol.server_port()+"-" +
+                                        self.__protocol.client_ip()+":"+self.__protocol.client_port()+"_request",
+                                        self.__protocol)
+
+    def run(self):
+        self.extract()
+        if "level" not in self.__args or self.__args.level == "1":
+            self.level1()
+        elif "level" in self.__args and self.__args.level == "2":
+            self.level2()
+        elif "level" in self.__args and self.__args.level == "3":
+            self.level3()
+        else:
+            self.level1()
+            self.level3()
+            self.level3()
+
 
 
 init = Initialization()
