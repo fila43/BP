@@ -13,9 +13,16 @@ class ObjectData:
     def __init__(self, start=None):
         self.__start = start
         self.__length = 0
+        self.__headers = {}
 
     def set_length(self, value):
         self.__length = value
+
+    def set_header(self, index, value):
+        self.__headers[index] = value
+
+    def get_headers(self):
+        return self.__headers
 
     def add(self, value):
         self.__length += value
@@ -54,6 +61,9 @@ class Protocol:
         if self.__request_value is None:
             return None
         return self.__command+" "+self.__request_value+"\n"
+
+    def remove_request(self):
+        self.__request_value = None
 
     @staticmethod
     def __create_json(pcap):
@@ -120,22 +130,31 @@ class Protocol:
         with open(filename) as my_file:
             return json.load(my_file)
 
-    def find_length(self, request_parameter = None):
+    def find_length(self, protocol_rules = None):
         """ find starts and lengths of all sending object and store it into list of ObjectData"""
         command_found = False   # flag True if object was found
+        tmp_headers = {}
+        tmp_header_value = None
 
         for packet in self.__json_data: # loop over each packet
+            tmp_header_value = None
+            if protocol_rules is not None and protocol_rules['request'] != "":
+                tmp_header_value = self.__search(protocol_rules['request'], packet)
+                if tmp_header_value is not None:
+                    if any(tmp_header_value in s for s in protocol_rules['request_parameter']):
+                        tmp_headers[tmp_header_value] = self.__search(protocol_rules['request_value'], packet)
+
             if self.__server is not None and (self.__server != self.__search("ip.src", packet)) and (self.__search("tcp.len", packet) != "0"):
                 command_found = False   # restart process of searching when whole object was send
 
             if not command_found:       # searching start of object
                 command_value = self.__search(self.__command_key, packet)
 
-                if (command_value is not None) and command_value.upper() == self.__command:
+                if (command_value is not None) and command_value.upper() == self.__command:         # find and create start of object
+                    if protocol_rules is not None and protocol_rules['request'] == "" and protocol_rules['request_value'] is not None:
+                        self.__request_value = self.__search(protocol_rules['request_value'], packet)  # level 2 zjisteni prikazu
                     command_found = True
-
-                    if request_parameter is not None:
-                        self.__request_value = self.__search(request_parameter, packet)     #level 2 zjisteni prikazu
+                    last_seq = self.__search("tcp.ack", packet)     # TODO potreba otestovat jinak smazat
 
                     self.__add_object(ObjectData(self.__search("tcp.ack", packet)))
                     self.__client = self.__search("ip.src", packet)
@@ -144,17 +163,20 @@ class Protocol:
                     self.__client_port = self.__search("tcp.srcport", packet)
 
             if command_found and (self.__server == self.__search("ip.src", packet)):    # setup object length
-                if self.__error is not None:
+                if self.__error is not None:                                            # ERROR handle
                     error_value = self.__search(self.__error, packet)
                     if error_value is not None:
                         if error_value == self.__error_code:
                             self.__remove_last()
                             command_found = False
-                            print ("deleting")
-            if command_found and (self.__server == self.__search("ip.src", packet)):
+                            print ("deleting")          # TODO smazat
+
+            if command_found and (self.__server == self.__search("ip.src", packet)):    # length addition
                 tcp_length = self.__search(self.__find_attr, packet)
                 if tcp_length is not None:
                     self.get_last_object().add(int(tcp_length))
+                    for key, item in tmp_headers.items():
+                        self.get_last_object().set_header(key, item)
 
 
 class HexaData:
@@ -236,6 +258,11 @@ class HexaData:
                     out.seek(0)
                     if protocol.get_request() is not None:
                         out.write(protocol.get_request())
+
+                    tmp_header = protocol.get_object(i).get_headers()
+                    if tmp_header is not None:
+                        for key in tmp_header:
+                            out.write(tmp_header[key]+"\n")
                     out.write(data)
                 file.close(out)
                 print "Creating file: "+dest_name+"("+str(i)+")"
@@ -260,6 +287,7 @@ class Initialization:
         parser.add_argument('file', metavar='file', help='source pcap file')
         parser.add_argument('--level', help='filtering level 1 - all, 2 - user data with headers, 3 - only user data,'
                                             ' default all levels')
+        parser.add_argument('--debug', action='store_true', help='output name is same like input name + suffix .out')
         parser.add_argument('--config', help='path to configuration file, default config')
         parser.add_argument('--errors', action='store_true', help='extract successful and wrong response,'
                                                                   ' default options is only ''for successful response')
@@ -270,11 +298,29 @@ class Initialization:
     def __read_config(self):
         with open(self.__args.config, 'r') as config_file:
             self.__protocol_rules['json_field'] = config_file.readline().strip()[9:]
-            self.__protocol_rules['request_parameter'] = config_file.readline().strip()[8:]
-            self.__protocol_rules['command'] = config_file.readline().strip()[6:]
+            self.__protocol_rules['json_field'] = self.__protocol_rules['json_field'][:self.__protocol_rules['json_field'].find('#')].strip()
+
+            self.__protocol_rules['command'] = config_file.readline().strip()[15:]
+            self.__protocol_rules['command'] = self.__protocol_rules['command'][:self.__protocol_rules['command'].find('#')].strip()
+
+            self.__protocol_rules['request'] = config_file.readline().strip()[8:]   # TODO!!!! stare request_parametr predelat v kodu
+            self.__protocol_rules['request'] = self.__protocol_rules['request'][:self.__protocol_rules['request'].find('#')].strip()
+
+            self.__protocol_rules['request_parameter'] = config_file.readline().strip()[14:]
+            self.__protocol_rules['request_parameter'] = self.__protocol_rules['request_parameter'][:self.__protocol_rules['request_parameter'].find('#')]
+            self.__protocol_rules['request_parameter'] = self.__protocol_rules['request_parameter'].strip().split(',')
+
+            self.__protocol_rules['request_value'] = config_file.readline().strip()[14:]
+            self.__protocol_rules['request_value'] = self.__protocol_rules['request_value'][:self.__protocol_rules['request_value'].find('#')].strip()
+
             self.__protocol_rules['error'] = config_file.readline().strip()[6:]
+            self.__protocol_rules['error'] = self.__protocol_rules['error'][:self.__protocol_rules['error'].find('#')].strip()
+
             self.__protocol_rules['error_value'] = config_file.readline().strip()[12:]
+            self.__protocol_rules['error_value'] = self.__protocol_rules['error_value'][:self.__protocol_rules['error_value'].find('#')].strip()
+
             delimiter = config_file.readline().strip()[10:]
+            delimiter = delimiter[:delimiter.find('#')].strip()
             self.__protocol_rules['delimiter'] = delimiter.decode("unicode_escape").encode("hex")
 
     def __get_error_name(self):
@@ -307,6 +353,7 @@ class Initialization:
 
         if self.__protocol.get_obj_list_len() == 0:
             print "Nothing to do! "
+            exit(1)
 
         self.__file_name = HexaData.convert_ip(self.__protocol.server_ip() + "." + self.__protocol.server_port())
 
@@ -314,15 +361,19 @@ class Initialization:
         self.__protocol.set_error(self.__get_error_name(), self.__get_error_value())
         self.__protocol.find_length()
         self.test_object_count()
+        self.__protocol.remove_request()
+       # if self.__args.debug is None:
         self.__hexa_data.write_data(self.__file_name,
                                     self.__protocol.server_ip()+":"+self.__protocol.server_port()+"-" +
                                     self.__protocol.client_ip()+":"+self.__protocol.client_port()+"_object",
                                     self.__protocol, self.__protocol_rules['delimiter'])
+    #else:
+         #   self.__file_name,
         self.__protocol.clean_obj_stack()
 
     def level2(self):
        # self.__protocol.remove_error()
-        self.__protocol.find_length(self.__protocol_rules['request_parameter'])
+        self.__protocol.find_length(self.__protocol_rules)
         self.test_object_count()
         self.__hexa_data.write_data(self.__file_name,
                                     self.__protocol.server_ip()+":"+self.__protocol.server_port()+"-" +
