@@ -14,6 +14,13 @@ class ObjectData:
         self.__start = start
         self.__length = 0
         self.__header = header
+        self.__request = None
+
+    def set_request(self, request):
+        self.__request = request
+
+    def get_request(self):
+        return self.__request
 
     def set_length(self, value):
         self.__length = value
@@ -57,10 +64,8 @@ class Protocol:
             print (obj)
         return ""
 
-    def get_request(self):
-        if self.__request_value is None:
-            return None
-        return self.__command+" "+self.__request_value+"\n"
+    def get_command(self):
+        return self.__command
 
     def remove_request(self):
         self.__request_value = None
@@ -165,9 +170,6 @@ class Protocol:
 
                 if (command_value is not None) and command_value.upper() == self.__command:         # find and create start of object
 
-                    if protocol_rules is not None and protocol_rules['request'] != "" and protocol_rules['request_parameter'] == "":
-                        self.__request_value = self.__search(protocol_rules['request'], packet)  # level 2 zjisteni prikazu pri splynuti smeru
-
                     header_flag = False
                     command_found = True
 
@@ -177,12 +179,15 @@ class Protocol:
                     self.__server_port = self.__search("tcp.dstport", packet)
                     self.__client_port = self.__search("tcp.srcport", packet)
 
+                    if protocol_rules is not None and protocol_rules['request'] != "" and protocol_rules['request_parameter'] == "":
+                        self.get_last_object().set_request(self.__search(protocol_rules['request'], packet))  # level 2 zjisteni prikazu pri splynuti smeru
+
             if header_flag and not command_found \
-                    and (self.__server == self.__search("ip.src", packet) or self.__server_port == self.__search("tcp.srcport", packet)):
+                    and (self.__server == self.__search("ip.src", packet) or self.__server_port == self.__search("tcp.srcport", packet)):             # setup header length
                 header.add(int(self.__search(self.__find_attr, packet)))
 
             if command_found and (self.__server == self.__search("ip.src", packet) or self.__server_port == self.__search("tcp.srcport", packet)):    # setup object length
-                if self.__error is not None:                                            # ERROR handle
+                if self.__error is not None:                                            # protocol ERROR handle
                     error_value = self.__search(self.__error, packet)
                     if error_value is not None:
                         if error_value == self.__error_code:
@@ -283,8 +288,8 @@ class HexaData:
                 with open(dest_name+"("+str(i)+")", 'wb') as out:
                     out.seek(0)
 
-                    if protocol.get_request() is not None:
-                        out.write(protocol.get_request())
+                    if protocol.get_object(i).get_request() is not None:
+                        out.write(protocol.get_command()+" "+protocol.get_object(i).get_request()+"\n")
                     if header_data is not None:
                         out.write(header_data)
 
