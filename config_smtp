@@ -1,0 +1,7 @@
+SEARCHED:smtp.response.code		#
+SEARCHED_VALUE:354			#
+REQUEST:smtp.req.command		#
+REQUEST_PARAM:MAIL			#
+ERROR:					#
+ERROR_VALUE:				#
+DELIMITER:\r\n\r\n			#

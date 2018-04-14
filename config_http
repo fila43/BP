@@ -1,0 +1,7 @@
+SEARCHED:http.request.method		#
+SEARCHED_VALUE:GET			#
+REQUEST:http.request.uri		#
+REQUEST_PARAM:				#
+ERROR:					#
+ERROR_VALUE:				#
+DELIMITER:\r\n\r\n			#

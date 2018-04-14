@@ -1,0 +1,7 @@
+SEARCHED:pop.request.command		#
+SEARCHED_VALUE:RETR			#
+REQUEST:pop.request.parameter		#
+REQUEST_PARAM:				#
+ERROR:pop.response.indicator		#
+ERROR_VALUE:-ERR			#
+DELIMITER:\r\n\r\n			#
