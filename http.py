@@ -531,32 +531,52 @@ class Initialization:
         parser.add_argument('--errors', action='store_true', help='extract successful and wrong response,'
                                                                   ' default options is only ''for successful response')
         self.__args = parser.parse_args()
-        if not "config" in self.__args:
-            self.__args['config'] = "config"
+        if self.__args.config is None:
+            self.__args.config = "config"
 
     def __read_config(self):
         with open(self.__args.config, 'r') as config_file:
             self.__protocol_rules['json_field'] = config_file.readline().strip()[9:]
-            self.__protocol_rules['json_field'] = self.__protocol_rules['json_field'][:self.__protocol_rules['json_field'].find('#')].strip()
+            if '#' in self.__protocol_rules['json_field']:
+                self.__protocol_rules['json_field'] = self.__protocol_rules['json_field'][:self.__protocol_rules['json_field'].find('#')].strip()
+            else:
+                self.__protocol_rules['json_field'] = self.__protocol_rules['json_field'].strip()
 
             self.__protocol_rules['command'] = config_file.readline().strip()[15:]
-            self.__protocol_rules['command'] = self.__protocol_rules['command'][:self.__protocol_rules['command'].find('#')].strip()
+            if '#' in self.__protocol_rules['command']:
+                self.__protocol_rules['command'] = self.__protocol_rules['command'][:self.__protocol_rules['command'].find('#')].strip()
+            else:
+                self.__protocol_rules['command'] = self.__protocol_rules['command'].strip()
 
             self.__protocol_rules['request'] = config_file.readline().strip()[8:]
-            self.__protocol_rules['request'] = self.__protocol_rules['request'][:self.__protocol_rules['request'].find('#')].strip()
+            if '#' in self.__protocol_rules['request']:
+                self.__protocol_rules['request'] = self.__protocol_rules['request'][:self.__protocol_rules['request'].find('#')].strip()
+            else:
+                self.__protocol_rules['request'] = self.__protocol_rules['request'].strip()
 
             self.__protocol_rules['request_parameter'] = config_file.readline().strip()[14:]
-            self.__protocol_rules['request_parameter'] = self.__protocol_rules['request_parameter'][:self.__protocol_rules['request_parameter'].find('#')]
-            self.__protocol_rules['request_parameter'] = self.__protocol_rules['request_parameter'].strip()
+            if '#' in self.__protocol_rules['request_parameter']:
+                self.__protocol_rules['request_parameter'] = self.__protocol_rules['request_parameter'][:self.__protocol_rules['request_parameter'].find('#')].strip()
+            else:
+                self.__protocol_rules['request_parameter'] = self.__protocol_rules['request_parameter'].strip()
 
             self.__protocol_rules['error'] = config_file.readline().strip()[6:]
-            self.__protocol_rules['error'] = self.__protocol_rules['error'][:self.__protocol_rules['error'].find('#')].strip()
+            if '#' in self.__protocol_rules['error']:
+                self.__protocol_rules['error'] = self.__protocol_rules['error'][:self.__protocol_rules['error'].find('#')].strip()
+            else:
+                self.__protocol_rules['error'] = self.__protocol_rules['error'].strip()
 
             self.__protocol_rules['error_value'] = config_file.readline().strip()[12:]
-            self.__protocol_rules['error_value'] = self.__protocol_rules['error_value'][:self.__protocol_rules['error_value'].find('#')].strip()
+            if '#' in self.__protocol_rules['error_value']:
+                self.__protocol_rules['error_value'] = self.__protocol_rules['error_value'][:self.__protocol_rules['error_value'].find('#')].strip()
+            else:
+                self.__protocol_rules['error_value'] = self.__protocol_rules['error_value'].strip()
 
             delimiter = config_file.readline().strip()[10:]
-            delimiter = delimiter[:delimiter.find('#')].strip()
+            if '#' in delimiter:
+                delimiter = delimiter[:delimiter.find('#')].strip()
+            else:
+                delimiter = delimiter.strip()
             self.__protocol_rules['delimiter'] = delimiter.decode("unicode_escape").encode("hex")
 
     def __get_error_name(self):
@@ -584,6 +604,7 @@ class Initialization:
             if os.path.exists("report.xml"):
                 subprocess.call(["rm", "report.xml"])
             print "Creating file: "+ name
+
     def test_object_count(self):
 
         if self.__protocol.get_obj_list_len() == 0:
